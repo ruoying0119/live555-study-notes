@@ -24,9 +24,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 int main(int argc, char** argv) {
   // Begin by setting up our usage environment:
+  // 1) 创建调度器 + 环境
   TaskScheduler* scheduler = BasicTaskScheduler::createNew();
   UsageEnvironment* env = BasicUsageEnvironment::createNew(*scheduler);
-
+  // 2) 可选的认证数据库
   UserAuthenticationDatabase* authDB = NULL;
 #ifdef ACCESS_CONTROL
   // To implement client access control to the RTSP server, do the following:
@@ -35,7 +36,7 @@ int main(int argc, char** argv) {
   // Repeat the above with each <username>, <password> that you wish to allow
   // access to the server.
 #endif
-
+  // 3) 创建 RTSP 服务器 (优先 554，失败则 8554)
   // Create the RTSP server.  Try first with the default port number (554),
   // and then with the alternative port number (8554):
   RTSPServer* rtspServer;
@@ -49,7 +50,7 @@ int main(int argc, char** argv) {
     *env << "Failed to create RTSP server: " << env->getResultMsg() << "\n";
     exit(1);
   }
-
+ // 4) 打印版本信息、提示 URL 前缀、支持的文件类型
   *env << "LIVE555 Media Server\n";
   *env << "\tversion " << MEDIA_SERVER_VERSION_STRING
        << " (LIVE555 Streaming Media library version "
@@ -91,13 +92,13 @@ int main(int argc, char** argv) {
   // Also, attempt to create a HTTP server for RTSP-over-HTTP tunneling.
   // Try first with the default HTTP port (80), and then with the alternative HTTP
   // port numbers (8000 and 8080).
-
+  // 5) 尝试开启 RTSP-over-HTTP 隧道（80/8000/8080）
   if (rtspServer->setUpTunnelingOverHTTP(80) || rtspServer->setUpTunnelingOverHTTP(8000) || rtspServer->setUpTunnelingOverHTTP(8080)) {
     *env << "(We use port " << rtspServer->httpServerPortNum() << " for optional RTSP-over-HTTP tunneling).)\n";
   } else {
     *env << "(RTSP-over-HTTP tunneling is not available.)\n";
   }
-
+  // 6) 进入事件循环
   env->taskScheduler().doEventLoop(); // does not return
 
   return 0; // only to prevent compiler warning

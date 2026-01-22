@@ -61,20 +61,24 @@ Boolean MediaSink::startPlaying(MediaSource& source,
 				afterPlayingFunc* afterFunc,
 				void* afterClientData) {
   // Make sure we're not already being played:
+  // 1. 检查是否已经在播放
   if (fSource != NULL) {
     envir().setResultMsg("This sink is already being played");
     return False;
   }
 
   // Make sure our source is compatible:
+  // 2.  检查源类型是否兼容
   if (!sourceIsCompatibleWithUs(source)) {
     envir().setResultMsg("MediaSink::startPlaying(): source is not compatible!");
     return False;
   }
+  // 3. 将源转换为 FramedSource
   fSource = (FramedSource*)&source;
-
+  // 4.  保存回调
   fAfterFunc = afterFunc;
   fAfterClientData = afterClientData;
+  // 5. 开始播放（调用子类实现）
   return continuePlaying();
 }
 

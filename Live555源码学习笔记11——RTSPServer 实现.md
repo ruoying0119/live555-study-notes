@@ -683,6 +683,46 @@ private:
 │   └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+
+客户端请求 (SETUP)
+    |
+    ▼
+incomingRequestHandler() -> handleRequestBytes()
+    |
+    ▼
+handleCmd_SETUP()  <-- 【关键入口】
+    |
+    +--- Step 1: 检查 URL 是否带 Session ID？
+    |     |-- 是: 查找现有的 RTSPClientSession
+    |     `-- 否: 创建新的 RTSPClientSession (new RTSPClientSession)
+    |
+    +--- Step 2: 查找 ServerMediaSession (资源) 和 Subsession (轨道)
+    |
+    +--- Step 3: 【核心】调用 subsession->getStreamParameters()
+    |     |
+    |     +-- 创建 Source (ByteStreamFileSource + H264Framer)
+    |     `-- 创建 Sink (H264VideoRTPSink)
+    |
+    +--- Step 4: 将 Source/Sink 存入 RTSPClientSession 的 StreamState 中
+    |
+    ▼
+返回 200 OK (带 Session ID)
+    |
+    | (时间流逝...)
+    ▼
+客户端请求 (PLAY)
+    |
+    ▼
+handleCmd_PLAY()
+    |
+    +--- Step 1: 根据 Session ID 找到 RTSPClientSession
+    |
+    +--- Step 2: 遍历内部所有的 StreamState
+    |
+    +--- Step 3: 调用 streamState.sink->startPlaying()  <-- 【点火】
+    |
+    ▼
+数据流开始传输
 ```
 
 ### 6.2 DESCRIBE 命令处理
@@ -1074,4 +1114,72 @@ rtspServer->addServerMediaSession(sms);
 ```
 
 ---
+
+
+
+
+
+```
+客户端           RTSPServer              RTSPClientConnection         RTSPClientSession            ServerMediaSession/Subsession              媒体链路
+  |  TCP连接  →  (监听socket)   →   新建 Connection 对象
+  |  DESCRIBE → handleRequestBytes()
+                parseRequestString -> handleCmd_DESCRIBE()
+                      |                       |
+                      | lookupServerMediaSession(urlSuffix)
+                      v                       |
+              (DynamicRTSPServer::createNewSMS)  -- 创建 SMS + H264 Subsession
+                      |
+              session->generateSDPDescription()
+                      |
+                      v
+           <------     回复 SDP 描述     ------
+
+
+  |  SETUP track1 → handleRequestBytes()
+                     -> (会话层) handleCmd_SETUP()
+                          |
+                          v
+                subsession->getStreamParameters()
+                     |   // 创建 ByteStreamFileSource
+                     |   // 创建 H264VideoStreamFramer
+                     |   // 创建 Groupsock(RTP/RTCP)
+                     |   // 创建 H264VideoRTPSink
+                     v
+                 保存 streamToken 到 fStreamStates[track1]
+           <------   回复 SETUP OK   ------
+
+
+  |  PLAY      → handleRequestBytes()
+                  -> handleCmd_withinSession("PLAY")
+                        |
+                        v
+         对每个 track 调 subsession->startStream(streamToken)
+                        |
+                        v
+         sink->startPlaying(*source, ...)  // 触发数据推流
+                        |
+         ByteStreamFileSource -> H264VideoStreamFramer -> H264VideoRTPSink -> UDP(RTP)
+
+
+  |  TEARDOWN → handleRequestBytes()
+                  -> handleCmd_withinSession("TEARDOWN")
+                        |
+                        v
+              subsession->deleteStream(streamToken)
+                        |
+                        v
+          关闭 sink/source/RTP socket，清理 session 状态
+```
+
+
+
+
+
+```
+RTSPServer
+  └─ 哈希表: urlSuffix -> ServerMediaSession (会话级：一条 URL，一个 SDP)
+          └─ subsessions[] : ServerMediaSubsession (每个 track，一条 m= 行 + 源/汇工厂)
+                 ├─ createNewStreamSource() → FramedSource (ByteStreamFileSource/H264VideoStreamFramer/摄像头...)
+                 └─ createNewRTPSink()      → RTPSink     (H264VideoRTPSink/AACAudioRTPSink/...)
+```
 

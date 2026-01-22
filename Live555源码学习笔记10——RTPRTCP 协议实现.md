@@ -1081,3 +1081,55 @@ rtcpInstance->setRRHandler(handleRR, NULL);
 
 ---
 
+
+
+
+
+```
+
+H264VideoRTPSink::startPlaying(FramedSource& source, ...)
+  └─> MultiFramedRTPSink::startPlaying(...)
+        └─> MultiFramedRTPSink::continuePlaying()
+              └─> 调 source.getNextFrame(...)
+                  // 这里的 source 实际是 H264VideoStreamFramer
+
+MultiFramedRTPSink::continuePlaying()
+  │
+  │ 调用（FramedSource 公共接口）
+  ▼
+H264VideoStreamFramer::getNextFrame(u_int8_t* to, unsigned maxSize,
+                                    afterGettingFunc*, onCloseFunc*, clientData)
+  └─> FramedSource::getNextFrame(...)  // 基类做一些状态设置
+        └─> H264VideoStreamFramer::doGetNextFrame()
+              // 这里是 H264/H265 专用：
+              //   - 看当前缓冲里有没有完整 NALU/Frame
+              //   - 如果不够，就向下游 ByteStreamFileSource 再要数据
+              
+H264VideoStreamFramer::doGetNextFrame()
+  │
+  │ 如果当前还没有完整的一帧 H.264 数据：
+  │   → 向下游 inputSource（ByteStreamFileSource）调用 getNextFrame()
+  ▼
+ByteStreamFileSource::getNextFrame(to, maxSize, afterGettingFunc*, onClose*, clientData)
+  └─> FramedSource::getNextFrame(...)
+        └─> ByteStreamFileSource::doGetNextFrame()
+              └─> 可能异步/同步进入 doReadFromFile()
+```
+
+
+
+```
+MultiFramedRTPSink::afterGettingFrame1()
+  │
+  │ 1. 调专用的 doSpecialFrameHandling()（在 H264or5VideoRTPSink 里）
+  │    - 判断帧大小，决定单 NALU / FU-A 分片 / STAP-A 等
+  │    - 填 payload NALU 头、FU indicator、FU header 等
+  │ 2. 把 RTP 头 + 负载写入 OutPacketBuffer
+  │
+  ▼
+MultiFramedRTPSink::sendPacketIfNecessary()
+  └─> RTPSink::sendPacket()
+        └─> Groupsock::output(envir(), packet, packetSize)
+              └─> ::sendto(udpSocket, packet, packetSize, ...)
+```
+

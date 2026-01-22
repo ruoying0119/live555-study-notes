@@ -64,20 +64,25 @@ void BasicTaskScheduler::schedulerTickTask() {
 #endif
 
 void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
+  // ========== 第1步：复制fd_set ==========
+  // 必须复制，因为select()会修改这些集合
   fd_set readSet = fReadSet; // make a copy for this select() call
   fd_set writeSet = fWriteSet; // ditto
   fd_set exceptionSet = fExceptionSet; // ditto
-
+  // ========== 第2步：计算超时时间 ==========
+  // 从延时队列获取下一个任务的到期时间
   DelayInterval const& timeToDelay = fDelayQueue.timeToNextAlarm();
   struct timeval tv_timeToDelay;
   tv_timeToDelay.tv_sec = timeToDelay.seconds();
   tv_timeToDelay.tv_usec = timeToDelay.useconds();
   // Very large "tv_sec" values cause select() to fail.
   // Don't make it any larger than 1 million seconds (11.5 days)
+  // 限制最大超时时间（防止select失败）
   const long MAX_TV_SEC = MILLION;
   if (tv_timeToDelay.tv_sec > MAX_TV_SEC) {
     tv_timeToDelay.tv_sec = MAX_TV_SEC;
   }
+  // 检查maxDelayTime参数限制
   // Also check our "maxDelayTime" parameter (if it's > 0):
   if (maxDelayTime > 0 &&
       (tv_timeToDelay.tv_sec > (long)maxDelayTime/MILLION ||
@@ -86,7 +91,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
     tv_timeToDelay.tv_sec = maxDelayTime/MILLION;
     tv_timeToDelay.tv_usec = maxDelayTime%MILLION;
   }
-
+  // ========== 第3步：调用select() ==========
   int selectResult = select(fMaxNumSockets, &readSet, &writeSet, &exceptionSet, &tv_timeToDelay);
   if (selectResult < 0) {
 #if defined(__WIN32__) || defined(_WIN32)
@@ -126,11 +131,13 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       }
   }
 
+  // ========== 第4步：处理Socket事件 ==========
   // Call the handler function for one readable socket:
   HandlerIterator iter(*fHandlers);
   HandlerDescriptor* handler;
   // To ensure forward progress through the handlers, begin past the last
   // socket number that we handled:
+   // 从上次处理的Socket之后开始（保证公平调度）
   if (fLastHandledSocketNum >= 0) {
     while ((handler = iter.next()) != NULL) {
       if (handler->socketNum == fLastHandledSocketNum) break;
@@ -140,12 +147,15 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       iter.reset(); // start from the beginning instead
     }
   }
+  // 遍历找到一个就绪的Socket
   while ((handler = iter.next()) != NULL) {
     int sock = handler->socketNum; // alias
     int resultConditionSet = 0;
+    // 检查这个Socket的就绪状态
     if (FD_ISSET(sock, &readSet) && FD_ISSET(sock, &fReadSet)/*sanity check*/) resultConditionSet |= SOCKET_READABLE;
     if (FD_ISSET(sock, &writeSet) && FD_ISSET(sock, &fWriteSet)/*sanity check*/) resultConditionSet |= SOCKET_WRITABLE;
     if (FD_ISSET(sock, &exceptionSet) && FD_ISSET(sock, &fExceptionSet)/*sanity check*/) resultConditionSet |= SOCKET_EXCEPTION;
+    // 如果满足监听条件，调用回调
     if ((resultConditionSet&handler->conditionSet) != 0 && handler->handlerProc != NULL) {
       fLastHandledSocketNum = sock;
           // Note: we set "fLastHandledSocketNum" before calling the handler,
@@ -154,6 +164,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       break;
     }
   }
+  // 如果没处理完所有Socket，从头再找一遍
   if (handler == NULL && fLastHandledSocketNum >= 0) {
     // We didn't call a handler, but we didn't get to check all of them,
     // so try again from the beginning:
@@ -177,16 +188,18 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 
   // Also handle any newly-triggered event (Note that we do this *after* calling a socket handler,
   // in case the triggered event handler modifies The set of readable sockets.)
+  // ========== 第5步：处理事件触发器 ==========
   if (fEventTriggersAreBeingUsed) {
     // Look for an event trigger that needs handling (making sure that we make forward progress through all possible triggers):
     unsigned i = fLastUsedTriggerNum;
     EventTriggerId mask = fLastUsedTriggerMask;
 
     do {
+      // 循环遍历所有触发器槽位
       i = (i+1)%MAX_NUM_EVENT_TRIGGERS;
       mask >>= 1;
       if (mask == 0) mask = EVENT_TRIGGER_ID_HIGH_BIT;
-
+      // 检查是否有待处理的触发事件
 #ifndef NO_STD_LIB
       if (fTriggersAwaitingHandling[i].test()) {
 	fTriggersAwaitingHandling[i].clear();
@@ -194,6 +207,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       if (fTriggersAwaitingHandling[i]) {
 	fTriggersAwaitingHandling[i] = False;
 #endif
+  // 调用事件处理函数
 	if (fTriggeredEventHandlers[i] != NULL) {
 	  (*fTriggeredEventHandlers[i])(fTriggeredEventClientDatas[i]);
 	}
@@ -204,7 +218,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
       }
     } while (i != fLastUsedTriggerNum);
   }
-
+  // ========== 第6步：处理到期的延时任务 ==========
   // Also handle any delayed event that may have come due.
   fDelayQueue.handleAlarm();
 }
