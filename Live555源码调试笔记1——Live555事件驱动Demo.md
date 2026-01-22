@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
 
 在回调函数`void incomingDataHandler(void* clientData, int mask)`打上断点，当断点触发时调试信息如下：
 
-![image-20260122112149620](C:/Users/Administrator/AppData/Roaming/Typora/typora-user-images/image-20260122112149620.png)
+![image-20260122112149620](https://gitee.com/ruoying0119/picture/raw/master/images/20260122155608494.png)
 
 程序从main函数入口进入调度器的`doEventLoop`函数内部，这个函数的内部是一个while循环，它在循环中不停地调用`SingleStep`。这个函数的153行的代码如下：
 
